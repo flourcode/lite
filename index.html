@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Federal BD Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      margin: 0;
+      background: #f8f9fa;
+      color: #333;
+    }
+    header {
+      background: white;
+      padding: 1rem 2rem;
+      border-bottom: 1px solid #ddd;
+      font-size: 1.2rem;
+      font-weight: bold;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+    .card-row {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+    }
+    .card {
+      background: white;
+      flex: 1;
+      min-width: 240px;
+      padding: 1.5rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+    .card h3 {
+      font-size: 0.95rem;
+      margin-bottom: 0.25rem;
+      color: #888;
+    }
+    .card p {
+      font-size: 1.5rem;
+      font-weight: bold;
+      margin: 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      margin-bottom: 2rem;
+    }
+    canvas, svg {
+      background: white;
+      padding: 1rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+    th, td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid #eee;
+      text-align: left;
+    }
+    th {
+      background: #f0f2f5;
+    }
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+  </style>
+</head>
+<body>
+  <header>Federal BD Strategy Dashboard</header>
+  <div class="container">
+    <div class="card-row">
+      <div class="card">
+        <h3>Total Obligation</h3>
+        <p>$112.5M</p>
+      </div>
+      <div class="card">
+        <h3>Number of Contracts</h3>
+        <p>311</p>
+      </div>
+      <div class="card">
+        <h3>Top Agency</h3>
+        <p>DISA</p>
+      </div>
+      <div class="card">
+        <h3>Top Vendor</h3>
+        <p>ATT Mobility LLC</p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <canvas id="barChart" height="300"></canvas>
+      <canvas id="pieChart" height="300"></canvas>
+    </div>
+
+    <svg id="sankeyChart" width="100%" height="400"></svg>
+
+    <h2 style="margin:2rem 0 1rem;">Contracts Table</h2>
+    <table id="dataTable"></table>
+  </div>
+
+  <script>
+    fetch('federal_contracts_data.json')
+      .then(res => res.json())
+      .then(data => {
+        // Bar Chart – Top 5 Vendors
+        const vendors = {};
+        data.forEach(d => {
+          const name = d["Legal Business Name"];
+          vendors[name] = (vendors[name] || 0) + parseFloat(d["Action Obligation ($)"]);
+        });
+        const topVendors = Object.entries(vendors).sort((a,b) => b[1]-a[1]).slice(0,5);
+        new Chart(barChart, {
+          type: 'bar',
+          data: {
+            labels: topVendors.map(x => x[0]),
+            datasets: [{ label: "Obligation ($)", data: topVendors.map(x => x[1]), backgroundColor: "#7e9dfc" }]
+          },
+          options: { plugins: { legend: { display: false } } }
+        });
+
+        // Pie Chart – NAICS Top 5
+        const naics = {};
+        data.forEach(d => {
+          const name = d["NAICS Description"];
+          naics[name] = (naics[name] || 0) + 1;
+        });
+        const topNAICS = Object.entries(naics).sort((a,b) => b[1]-a[1]).slice(0,5);
+        new Chart(pieChart, {
+          type: 'pie',
+          data: {
+            labels: topNAICS.map(x => x[0]),
+            datasets: [{ data: topNAICS.map(x => x[1]), backgroundColor: ["#82ca9d", "#ffc658", "#ff7f50", "#8884d8", "#d0ed57"] }]
+          }
+        });
+
+        // Sankey Chart
+        const sankeyNodes = [], sankeyLinks = [], nodeMap = {};
+        let idx = 0;
+        function getNode(name) {
+          if (!(name in nodeMap)) {
+            nodeMap[name] = idx++;
+            sankeyNodes.push({ name });
+          }
+          return nodeMap[name];
+        }
+        data.forEach(d => {
+          const agency = d["Contracting Agency"], vendor = d["Ultimate Parent Legal Business Name"];
+          const val = parseFloat(d["Action Obligation ($)"]);
+          if (!agency || !vendor || !val) return;
+          sankeyLinks.push({ source: getNode(agency), target: getNode(vendor), value: val });
+        });
+
+        const sankey = d3.sankey().nodeWidth(20).nodePadding(10).extent([[1, 1], [1180, 380]]);
+        const graph = { nodes: sankeyNodes, links: sankeyLinks };
+        sankey(graph);
+        const svg = d3.select("#sankeyChart");
+        svg.append("g").selectAll("rect").data(graph.nodes).join("rect")
+          .attr("x", d => d.x0).attr("y", d => d.y0)
+          .attr("height", d => d.y1 - d.y0).attr("width", d => d.x1 - d.x0)
+          .attr("fill", "#4e73df").append("title").text(d => d.name);
+        svg.append("g").attr("fill", "none").selectAll("path").data(graph.links).join("path")
+          .attr("d", d3.sankeyLinkHorizontal()).attr("stroke", "#bbb")
+          .attr("stroke-width", d => Math.max(1, d.width)).attr("opacity", 0.6)
+          .append("title").text(d => `${d.source.name} → ${d.target.name} $${d.value.toFixed(0)}`);
+
+        // Table
+        const table = document.getElementById("dataTable");
+        const cols = ["Date Signed", "Contracting Agency", "Legal Business Name", "Action Obligation ($)", "NAICS Description"];
+        const thead = table.createTHead().insertRow();
+        cols.forEach(c => thead.insertCell().textContent = c);
+        const tbody = table.createTBody();
+        data.slice(0, 20).forEach(row => {
+          const tr = tbody.insertRow();
+          cols.forEach(c => tr.insertCell().textContent = row[c] || "");
+        });
+      });
+  </script>
+</body>
+</html>
